@@ -1,0 +1,12 @@
+[package]
+name = "mq-ipc"
+version = "0.1.0"
+edition = "2025"
+license = "MIT"
+authors = ["Felipe Neves <ryukokki.felipe@gmail.com>"]
+description = "Simple POSIX mqueue-based publish/subscribe IPC in Rust with internal wire TX mirroring"
+repository = "https://github.com/uLipe/mq-ipc"
+
+[dependencies]
+libc = "0.2"
+bytemuck = { version = "1.15", features = ["derive"] }
