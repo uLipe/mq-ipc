@@ -443,3 +443,160 @@ pub mod wire {
         Topic::<WirePacket>::new(IPC_TX_TOPIC_NAME, maxmsg)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::wire;
+    use bytemuck::{Pod, Zeroable};
+    use libc;
+    use std::{
+        ffi::CString,
+        sync::{Arc, Mutex},
+        thread,
+        time::Duration,
+    };
+
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug, Pod, Zeroable, PartialEq)]
+    struct TestMsg {
+        a: u32,
+        b: u32,
+    }
+
+    fn unlink_queue(name: &str) {
+        if let Ok(cname) = CString::new(name) {
+            unsafe {
+                let rc = libc::mq_unlink(cname.as_ptr());
+                if rc == -1 {
+                    // Ignore ENOENT.
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn create_topic_and_publish() {
+        let topic_name = format!("/mq_ipc_test_create_{}", std::process::id());
+
+        {
+            let topic: Topic<TestMsg> =
+                Topic::new(&topic_name, 4).expect("failed to create topic");
+
+            let msg = TestMsg { a: 1, b: 2 };
+            topic
+                .publish(&msg, 1, 0)
+                .expect("failed to publish to topic");
+        }
+
+        unlink_queue(&topic_name);
+    }
+
+    #[test]
+    fn publish_and_receive_with_subscriber() {
+        let topic_name = format!("/mq_ipc_test_sub_{}", std::process::id());
+
+        {
+            let topic: Topic<TestMsg> =
+                Topic::new(&topic_name, 4).expect("failed to create topic");
+
+            let received: Arc<Mutex<Vec<TestMsg>>> = Arc::new(Mutex::new(Vec::new()));
+            let received_clone = Arc::clone(&received);
+
+            topic.subscribe(move |m: TestMsg| {
+                received_clone.lock().unwrap().push(m);
+            });
+
+            let msg = TestMsg { a: 10, b: 20 };
+            topic
+                .publish(&msg, 1, 0)
+                .expect("failed to publish to topic");
+
+            for _ in 0..50 {
+                {
+                    let guard = received.lock().unwrap();
+                    if !guard.is_empty() {
+                        assert_eq!(guard[0], msg);
+                        break;
+                    }
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+
+            let guard = received.lock().unwrap();
+            assert_eq!(guard.len(), 1, "expected exactly one received message");
+            assert_eq!(guard[0], msg);
+        }
+
+        unlink_queue(&topic_name);
+    }
+
+    #[test]
+    fn wiretx_produces_expected_wirepacket() {
+        let local_topic = format!("/mq_ipc_test_wiretx_{}", std::process::id());
+
+        {
+            let wire_tx =
+                wire::WireTx::<TestMsg>::new(&local_topic, 4).expect("failed to create WireTx");
+
+            let tx_topic =
+                wire::open_ipc_tx(4).expect("failed to open internal ipc_tx topic");
+
+            let received: Arc<Mutex<Vec<wire::WirePacket>>> =
+                Arc::new(Mutex::new(Vec::new()));
+            let received_clone = Arc::clone(&received);
+
+            tx_topic.subscribe(move |pkt: wire::WirePacket| {
+                received_clone.lock().unwrap().push(pkt);
+            });
+
+            let msg = TestMsg {
+                a: 0xDEAD_BEEF,
+                b: 0x1234_5678,
+            };
+
+            wire_tx
+                .publish(&msg)
+                .expect("failed to publish via WireTx");
+
+            for _ in 0..50 {
+                {
+                    let guard = received.lock().unwrap();
+                    if !guard.is_empty() {
+                        break;
+                    }
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+
+            let guard = received.lock().unwrap();
+            assert!(
+                !guard.is_empty(),
+                "expected at least one WirePacket in /ipc_tx"
+            );
+
+            let pkt = guard.last().unwrap();
+
+            assert_eq!(
+                pkt.topic_name(),
+                local_topic,
+                "WirePacket topic name mismatch"
+            );
+
+            let expected_bytes = bytemuck::bytes_of(&msg);
+            let plen = pkt.payload_len as usize;
+            assert!(
+                plen <= expected_bytes.len(),
+                "payload_len is larger than expected struct size"
+            );
+            assert_eq!(
+                &pkt.data[..plen],
+                &expected_bytes[..plen],
+                "WirePacket payload bytes do not match TestMsg"
+            );
+        }
+
+        unlink_queue(&local_topic);
+        unlink_queue(wire::IPC_TX_TOPIC_NAME);
+    }
+}
