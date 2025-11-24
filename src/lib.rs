@@ -108,7 +108,7 @@ impl MqTopic {
         let mqd = unsafe {
             libc::mq_open(
                 cname.as_ptr(),
-                libc::O_CREAT | libc::O_RDWR | libc::O_NONBLOCK,
+                libc::O_CREAT | libc::O_RDWR,
                 0o660,
                 &mut attr,
             )
@@ -153,15 +153,12 @@ impl MqTopic {
                 if ret < 0 {
                     let err = io::Error::last_os_error();
                     if let Some(code) = err.raw_os_error() {
-                        if code == libc::EAGAIN {
-                            thread::sleep(Duration::from_millis(5));
-                            continue;
-                        } else if code == libc::EINTR {
+                        if code == libc::EINTR {
                             continue;
                         }
                     }
-                    thread::sleep(Duration::from_millis(5));
-                    continue;
+                    eprintln!("mq_receive error: {err}");
+                    break;
                 }
 
                 // SAFETY: buffer holds a valid Msg structure.
