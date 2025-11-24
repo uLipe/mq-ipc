@@ -202,12 +202,96 @@ Just **POSIX mqueue + typed wrappers + optional wire framing**.
 | ------------------------ | --------------------------------------------------------------- |
 | `motor_publisher.rs`     | Typed topic with WireTx reflection                              |
 | `router_tx.rs`           | Reads `/ipc_tx` and prints wire packets                         |
-| `router_rx_socketcan.rs` | Receives wire packets from SocketCAN and dispatches into topics |
+| `motor_subscriber.rs` | Receives wire packets from another process and prints |
 
-Run examples:
+---
+
+# Getting Started
+
+This section shows the fastest way to try **MqIPC** using the built-in examples.
+You only need a POSIX system with support for **POSIX mqueues** (Linux, WSL2, *BSD, ESP-IDF, etc).
+
+---
+
+## 1. Compile the project
+
+```bash
+git clone https://github.com/uLipe/mq-ipc.git
+cd mq-ipc
+cargo build
+```
+
+---
+
+## 2. Run the Subscriber (listener)
+
+Open **terminal 1**:
+
+```bash
+cargo run --example motor_subscriber
+```
+
+Expected output:
+
+```
+motor_subscriber: listening on topic /motor/state
+```
+
+As soon as messages arrive, you will see logs like:
+
+```
+[motor_subscriber] received: position=1.000, velocity=2.000, torque=0.500
+```
+
+---
+
+## 3. Run the Publisher
+
+Open **terminal 2**:
 
 ```bash
 cargo run --example motor_publisher
-cargo run --example router_tx
-cargo run --example router_rx_socketcan
+```
+
+This example publishes a `MotorState` struct into the topic `/motor/state` once per second.
+You should now see the subscriber printing live updates.
+
+---
+
+## 4. What’s happening under the hood?
+
+* Both examples open the system-wide mqueue `/motor/state`.
+* The publisher sends `MotorState` values via `Topic<MotorState>::publish()`.
+* The subscriber registers a callback via `subscribe(...)`.
+* A background worker thread inside `Topic<T>` receives messages from the mqueue and dispatches them to the callback(s).
+* Because POSIX mqueues are **global**, the two programs communicate even though they're separate processes.
+
+This validates the entire IPC stack:
+
+1. Typed messages (`MotorState`)
+2. Encoding through `Msg`
+3. POSIX `mq_open`, `mq_send`, `mq_receive`
+4. Worker dispatch thread
+5. Fan-out callback
+
+---
+
+## 5. Cleaning up (optional)
+
+To inspect message queues:
+
+```bash
+ls -l /dev/mqueue
+```
+
+To delete a queue manually:
+
+```bash
+sudo rm /dev/mqueue/motor/state
+```
+
+or via code:
+
+```rust
+mq_unlink("/motor/state");
 ```
