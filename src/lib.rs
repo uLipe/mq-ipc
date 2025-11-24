@@ -105,7 +105,7 @@ impl MqTopic {
             libc::mq_open(
                 cname.as_ptr(),
                 libc::O_CREAT | libc::O_RDWR,
-                0o660,
+                0o666,
                 &mut attr,
             )
         };

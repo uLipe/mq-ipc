@@ -21,46 +21,31 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+use mq_ipc::Topic;
 use bytemuck::{Pod, Zeroable};
-use mq_ipc::wire::WireTx;
-use std::{io, thread, time::Duration};
 
-/// Example typed message for a motor state.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MotorState {
     pub position: f32,
     pub velocity: f32,
-    pub torque: f32,
+    pub torque:  f32,
 }
 
-fn main() -> io::Result<()> {
-    // Create a wire-aware topic:
-    // - local topic: "/motor/state"
-    // - internal TX topic: "/ipc_tx" (inside the lib)
-    let motor = WireTx::<MotorState>::new("/example_motor_state", 4)?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let topic_name = "/example_motor_state";
+    let topic: Topic<MotorState> = Topic::new(topic_name, 8)?;
 
-    println!("motor_publisher started (local + mirrored to /ipc_tx).");
+    println!("motor_subscriber: listening on topic {}", topic_name);
 
-    let mut angle: f32 = 0.0;
-    let mut vel: f32 = 1.0;
+    topic.subscribe(|state: MotorState| {
+        println!(
+            "[motor_subscriber] received: position={:.3}, velocity={:.3}, torque={:.3}",
+            state.position, state.velocity, state.torque
+        );
+    });
 
     loop {
-        angle += 0.1;
-        vel += 0.05;
-
-        let msg = MotorState {
-            position: angle,
-            velocity: vel,
-            torque: 0.42,
-        };
-
-        motor.publish(&msg)?;
-        println!(
-            "Published MotorState: pos={:.3}, vel={:.3}, tq={:.3}",
-            msg.position, msg.velocity, msg.torque
-        );
-
-        thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }
