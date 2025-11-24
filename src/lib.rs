@@ -131,6 +131,49 @@ impl MqTopic {
         })
     }
 
+    pub fn open_existing(name: &str) -> io::Result<Option<Self>> {
+        let cname = CString::new(name)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid queue name"))?;
+
+        let mut attr = libc::mq_attr {
+            mq_flags: 0,
+            mq_maxmsg: 0,
+            mq_msgsize: std::mem::size_of::<Msg>() as c_long,
+            mq_curmsgs: 0,
+        };
+
+        let mqd = unsafe {
+            libc::mq_open(
+                cname.as_ptr(),
+                libc::O_RDWR,
+                0o660,
+                &mut attr,
+            )
+        };
+
+        if mqd == -1 {
+            let err = io::Error::last_os_error();
+            if let Some(code) = err.raw_os_error() {
+                if code == libc::ENOENT {
+                    return Ok(None)
+                }
+            }
+            return Err(err);
+        }
+
+        let subs = Arc::new(Mutex::new(Vec::<Callback>::new()));
+        let running = Arc::new(AtomicBool::new(true));
+        let worker = Self::spawn_worker(mqd, Arc::clone(&subs), Arc::clone(&running));
+
+        Ok(Some(MqTopic {
+            name: name.to_string(),
+            mqd,
+            subs,
+            running,
+            worker: Some(worker),
+        }))
+    }
+
     fn spawn_worker(
         mqd: mqd_t,
         subs: Arc<Mutex<Vec<Callback>>>,
@@ -287,39 +330,51 @@ pub mod wire {
     /// Internal, fixed name for the wire TX topic.
     pub const IPC_TX_TOPIC_NAME: &str = "/ipc_tx";
 
+    /// Maximum topic name length stored in the wire packet.
+    pub const WIRE_MAX_TOPIC: usize = 64;
+
     /// Maximum payload size carried in a wire packet.
     pub const WIRE_MAX_PAYLOAD: usize = 128;
 
-    /// Generic wire packet: hash + len + raw bytes.
+    /// Generic wire packet: topic name (as bytes) + payload bytes.
+    ///
+    /// The actual topic name length is in `topic_len`, and the payload
+    /// length is in `payload_len`. Both are truncated to their respective
+    /// max sizes if needed.
     #[repr(C)]
     #[derive(Copy, Clone, Debug, Pod, Zeroable)]
     pub struct WirePacket {
-        pub topic_hash: u32,
-        pub len: u16,
-        pub reserved: u16,
+        pub topic_len: u8,
+        pub payload_len: u16,
+        pub reserved: u8,
+        pub topic: [u8; WIRE_MAX_TOPIC],
         pub data: [u8; WIRE_MAX_PAYLOAD],
     }
 
-    /// Simple 32-bit FNV-1a hash for topic names.
-    pub fn topic_hash(name: &str) -> u32 {
-        let mut h: u32 = 0x811C9DC5;
-        for &b in name.as_bytes() {
-            h ^= b as u32;
-            h = h.wrapping_mul(0x0100_0193);
+    impl WirePacket {
+        /// Try to decode the topic name as UTF-8.
+        /// Returns an empty string on invalid UTF-8.
+        pub fn topic_name(&self) -> String {
+            let len = self.topic_len as usize;
+            let len = len.min(WIRE_MAX_TOPIC);
+            match std::str::from_utf8(&self.topic[..len]) {
+                Ok(s) => s.to_string(),
+                Err(_) => String::new(),
+            }
         }
-        h
     }
 
     /// WireTx<T>:
     /// - publishes T to the local topic
-    /// - mirrors a serialized T as WirePacket into the *internal* TX topic ("/ipc_tx").
+    /// - mirrors a serialized T as WirePacket into the *internal* TX topic ("/ipc_tx"),
+    ///   including the topic name as a UTF-8 string in the packet.
     pub struct WireTx<T>
     where
         T: Pod + Zeroable + Send + Sync + 'static,
     {
         local: Topic<T>,         // e.g. "/motor/state"
         tx: Topic<WirePacket>,   // always "/ipc_tx" under the hood
-        topic_hash: u32,
+        topic_name: String,      // stored so we can serialize it on every publish
         _marker: PhantomData<T>,
     }
 
@@ -333,12 +388,11 @@ pub mod wire {
         pub fn new(local_topic_name: &str, maxmsg: c_long) -> io::Result<Self> {
             let local = Topic::<T>::new(local_topic_name, maxmsg)?;
             let tx = Topic::<WirePacket>::new(IPC_TX_TOPIC_NAME, maxmsg)?;
-            let h = topic_hash(local_topic_name);
 
             Ok(Self {
                 local,
                 tx,
-                topic_hash: h,
+                topic_name: local_topic_name.to_string(),
                 _marker: PhantomData,
             })
         }
@@ -346,20 +400,31 @@ pub mod wire {
         /// Publish:
         /// 1) local T on its normal topic
         /// 2) mirror as WirePacket on the internal "/ipc_tx".
+        ///
+        /// The WirePacket will carry:
+        /// - topic name as UTF-8 (truncated to WIRE_MAX_TOPIC)
+        /// - serialized T bytes (truncated to WIRE_MAX_PAYLOAD)
         pub fn publish(&self, value: &T) -> io::Result<()> {
-            // 1) local
+            // 1) local publish
             self.local.publish(value, 1, 0)?;
 
-            // 2) serialize T -> WirePacket on "/ipc_tx"
+            // 2) serialize T + topic name into WirePacket on "/ipc_tx"
+            let topic_bytes = self.topic_name.as_bytes();
+            let tlen = topic_bytes.len().min(WIRE_MAX_TOPIC);
+
             let raw = bytemuck::bytes_of(value);
+            let plen = raw.len().min(WIRE_MAX_PAYLOAD);
+
             let mut pkt = WirePacket {
-                topic_hash: self.topic_hash,
-                len: raw.len().min(WIRE_MAX_PAYLOAD) as u16,
+                topic_len: tlen as u8,
+                payload_len: plen as u16,
                 reserved: 0,
+                topic: [0u8; WIRE_MAX_TOPIC],
                 data: [0u8; WIRE_MAX_PAYLOAD],
             };
-            let n = pkt.len as usize;
-            pkt.data[..n].copy_from_slice(&raw[..n]);
+
+            pkt.topic[..tlen].copy_from_slice(&topic_bytes[..tlen]);
+            pkt.data[..plen].copy_from_slice(&raw[..plen]);
 
             self.tx.publish(&pkt, 0)
         }

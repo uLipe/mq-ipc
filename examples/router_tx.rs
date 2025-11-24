@@ -21,19 +21,23 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-use bytemuck::Pod;
 use mqueue_ipc::wire::{open_ipc_tx, WirePacket};
 use std::{io, thread, time::Duration};
 
 fn send_over_wire(pkt: &WirePacket) {
+    let topic = pkt.topic_name();
+
     println!(
-        "[router_tx] WIRE TX: hash=0x{:08X}, len={}",
-        pkt.topic_hash, pkt.len
+        "[router_tx] WIRE TX: topic=\"{}\", payload_len={}",
+        topic,
+        pkt.payload_len
     );
 
-    let header_size = std::mem::size_of::<WirePacket>() - WirePacket::data.len();
     let bytes: &[u8] = bytemuck::bytes_of(pkt);
-    let total = header_size + pkt.len as usize;
+
+    let header_size = std::mem::size_of::<WirePacket>() - mqueue_ipc::wire::WIRE_MAX_PAYLOAD;
+
+    let total = header_size + pkt.payload_len as usize;
 
     print!("  raw: ");
     for b in &bytes[..total] {
@@ -49,7 +53,7 @@ fn main() -> io::Result<()> {
     println!("router_tx started. Listening on /ipc_tx...");
 
     tx_topic.subscribe(|pkt: WirePacket| {
-        // In a real system, this is where you would write `pkt.data[..pkt.len]`
+        // In a real system, this is where you would write `pkt.data[..pkt.payload_len]`
         // to a serial port, CAN frame, or some other physical transport.
         send_over_wire(&pkt);
     });
