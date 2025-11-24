@@ -21,7 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-use mqueue_ipc::wire::{open_ipc_tx, WirePacket};
+use mq_ipc::wire::{open_ipc_tx, WirePacket};
 use std::{io, thread, time::Duration};
 
 fn send_over_wire(pkt: &WirePacket) {
@@ -35,7 +35,7 @@ fn send_over_wire(pkt: &WirePacket) {
 
     let bytes: &[u8] = bytemuck::bytes_of(pkt);
 
-    let header_size = std::mem::size_of::<WirePacket>() - mqueue_ipc::wire::WIRE_MAX_PAYLOAD;
+    let header_size = std::mem::size_of::<WirePacket>() - mq_ipc::wire::WIRE_MAX_PAYLOAD;
 
     let total = header_size + pkt.payload_len as usize;
 

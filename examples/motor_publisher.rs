@@ -22,7 +22,7 @@ THE SOFTWARE.
 */
 
 use bytemuck::{Pod, Zeroable};
-use mqueue_ipc::wire::WireTx;
+use mq_ipc::wire::WireTx;
 use std::{io, thread, time::Duration};
 
 /// Example typed message for a motor state.

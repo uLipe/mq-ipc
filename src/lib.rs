@@ -31,21 +31,18 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
 };
 
 use bytemuck::{Pod, Zeroable};
 
-/// Maximum payload size for the raw message envelope.
 pub const MSG_PAYLOAD_SIZE: usize = 240;
 
-/// Raw message header.
+const MSG_TYPE_SHUTDOWN: u16 = 0xFFFF;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct MsgHeader {
-    /// Application-defined message type.
     pub msg_type: u16,
-    /// Payload length in bytes (<= MSG_PAYLOAD_SIZE).
     pub len: u16,
 }
 
@@ -98,12 +95,11 @@ impl MqTopic {
         let cname = CString::new(name)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid queue name"))?;
 
-        let mut attr = libc::mq_attr {
-            mq_flags: 0,
-            mq_maxmsg: maxmsg,
-            mq_msgsize: std::mem::size_of::<Msg>() as c_long,
-            mq_curmsgs: 0,
-        };
+        let mut attr: libc::mq_attr = unsafe { std::mem::zeroed() };
+        attr.mq_flags = 0;
+        attr.mq_maxmsg = maxmsg;
+        attr.mq_msgsize = std::mem::size_of::<Msg>() as c_long;
+        attr.mq_curmsgs = 0;
 
         let mqd = unsafe {
             libc::mq_open(
@@ -135,19 +131,12 @@ impl MqTopic {
         let cname = CString::new(name)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid queue name"))?;
 
-        let mut attr = libc::mq_attr {
-            mq_flags: 0,
-            mq_maxmsg: 0,
-            mq_msgsize: std::mem::size_of::<Msg>() as c_long,
-            mq_curmsgs: 0,
-        };
-
         let mqd = unsafe {
             libc::mq_open(
                 cname.as_ptr(),
                 libc::O_RDWR,
                 0o660,
-                &mut attr,
+                std::ptr::null_mut::<libc::mq_attr>(),
             )
         };
 
@@ -182,7 +171,7 @@ impl MqTopic {
         thread::spawn(move || {
             let mut buf = [0u8; std::mem::size_of::<Msg>()];
 
-            while running.load(Ordering::Relaxed) {
+            loop {
                 let mut prio: u32 = 0;
                 let ret = unsafe {
                     libc::mq_receive(
@@ -196,16 +185,38 @@ impl MqTopic {
                 if ret < 0 {
                     let err = io::Error::last_os_error();
                     if let Some(code) = err.raw_os_error() {
-                        if code == libc::EINTR {
-                            continue;
+                        match code {
+                            libc::EINTR => {
+                                // sinal interrompeu; se já mandaram parar, sai
+                                if !running.load(Ordering::Relaxed) {
+                                    break;
+                                }
+                                continue;
+                            }
+                            libc::EBADF => {
+                                // fila foi fechada: hora de sair
+                                break;
+                            }
+                            _ => {
+                                eprintln!("mq_receive error: {err}");
+                                if !running.load(Ordering::Relaxed) {
+                                    break;
+                                }
+                                continue;
+                            }
                         }
                     }
-                    eprintln!("mq_receive error: {err}");
                     break;
                 }
 
-                // SAFETY: buffer holds a valid Msg structure.
+                // SAFETY: buffer contém Msg válido
                 let msg: Msg = unsafe { std::ptr::read(buf.as_ptr() as *const Msg) };
+
+                if msg.hdr.msg_type == MSG_TYPE_SHUTDOWN
+                    && !running.load(Ordering::Relaxed)
+                {
+                    break;
+                }
 
                 let guard = subs.lock().unwrap();
                 for cb in guard.iter() {
@@ -250,13 +261,28 @@ impl MqTopic {
 impl Drop for MqTopic {
     fn drop(&mut self) {
         self.running.store(false, Ordering::Relaxed);
+        let shutdown = Msg::new(MSG_TYPE_SHUTDOWN, &[]);
+
+        unsafe {
+            let data_ptr = &shutdown as *const Msg as *const c_char;
+            let rc = libc::mq_send(
+                self.mqd,
+                data_ptr,
+                std::mem::size_of::<Msg>(),
+                0,
+            );
+            if rc == -1 {
+                eprintln!("mq_send shutdown failed: {}", io::Error::last_os_error());
+            }
+
+            libc::mq_close(self.mqd);
+        }
+
         if let Some(handle) = self.worker.take() {
             let _ = handle.join();
         }
-        unsafe {
-            libc::mq_close(self.mqd);
-        }
-        // Optional: auto-unlink the queue name when last instance is dropped.
+
+        // unlink opcional, se você quiser limpar o nome automaticamente
         // if let Ok(cname) = CString::new(self.name.clone()) {
         //     unsafe { libc::mq_unlink(cname.as_ptr()); }
         // }
@@ -293,10 +319,10 @@ where
         F: Fn(T) + Send + Sync + 'static,
     {
         self.inner.subscribe(move |msg: Msg| {
-            let mut buf = [0u8; std::mem::size_of::<T>()];
-            let n = std::cmp::min(msg.hdr.len as usize, std::mem::size_of::<T>());
+            let mut buf = vec![0u8; std::mem::size_of::<T>()];
+            let n = std::cmp::min(msg.hdr.len as usize, buf.len());
             buf[..n].copy_from_slice(&msg.payload[..n]);
-            let value: T = *bytemuck::from_bytes::<T>(&buf);
+            let value: T = *bytemuck::from_bytes::<T>(&buf[..]);
             f(value);
         });
     }
@@ -344,8 +370,8 @@ pub mod wire {
     #[repr(C)]
     #[derive(Copy, Clone, Debug, Pod, Zeroable)]
     pub struct WirePacket {
-        pub topic_len: u8,
         pub payload_len: u16,
+        pub topic_len: u8,
         pub reserved: u8,
         pub topic: [u8; WIRE_MAX_TOPIC],
         pub data: [u8; WIRE_MAX_PAYLOAD],
@@ -426,7 +452,7 @@ pub mod wire {
             pkt.topic[..tlen].copy_from_slice(&topic_bytes[..tlen]);
             pkt.data[..plen].copy_from_slice(&raw[..plen]);
 
-            self.tx.publish(&pkt, 0)
+            self.tx.publish(&pkt, 0, 0)
         }
 
         /// If you still want to subscribe locally:
@@ -447,7 +473,6 @@ pub mod wire {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::wire;
     use bytemuck::{Pod, Zeroable};
     use libc;
     use std::{
