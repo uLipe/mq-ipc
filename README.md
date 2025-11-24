@@ -2,6 +2,9 @@
 
 ### *(with optional wire mirroring for distributed systems)*
 
+[![CI](https://github.com/uLipe/mq-ipc/actions/workflows/ci.yml/badge.svg)](https://github.com/uLipe/mq-ipc/actions/workflows/ci.yml)
+
+
 `mq-ipc` (or **MqIPC**) is a fast, minimal, zero-dependency publish/subscribe IPC system built on **POSIX mqueues**.
 It is designed for embedded Linux, robotics, industrial automation, and distributed control systems where:
 

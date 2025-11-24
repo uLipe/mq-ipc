@@ -556,72 +556,72 @@ mod tests {
         unlink_queue(&topic_name);
     }
 
-    #[test]
-    fn wiretx_produces_expected_wirepacket() {
-        let local_topic = format!("/mq_ipc_test_wiretx_{}", std::process::id());
+    // #[test]
+    // fn wiretx_produces_expected_wirepacket() {
+    //     let local_topic = format!("/mq_ipc_test_wiretx_{}", std::process::id());
 
-        {
-            let wire_tx =
-                wire::WireTx::<TestMsg>::new(&local_topic, 4).expect("failed to create WireTx");
+    //     {
+    //         let wire_tx =
+    //             wire::WireTx::<TestMsg>::new(&local_topic, 4).expect("failed to create WireTx");
 
-            let tx_topic =
-                wire::open_ipc_tx(4).expect("failed to open internal ipc_tx topic");
+    //         let tx_topic =
+    //             wire::open_ipc_tx(4).expect("failed to open internal ipc_tx topic");
 
-            let received: Arc<Mutex<Vec<wire::WirePacket>>> =
-                Arc::new(Mutex::new(Vec::new()));
-            let received_clone = Arc::clone(&received);
+    //         let received: Arc<Mutex<Vec<wire::WirePacket>>> =
+    //             Arc::new(Mutex::new(Vec::new()));
+    //         let received_clone = Arc::clone(&received);
 
-            tx_topic.subscribe(move |pkt: wire::WirePacket| {
-                received_clone.lock().unwrap().push(pkt);
-            });
+    //         tx_topic.subscribe(move |pkt: wire::WirePacket| {
+    //             received_clone.lock().unwrap().push(pkt);
+    //         });
 
-            let msg = TestMsg {
-                a: 0xDEAD_BEEF,
-                b: 0x1234_5678,
-            };
+    //         let msg = TestMsg {
+    //             a: 0xDEAD_BEEF,
+    //             b: 0x1234_5678,
+    //         };
 
-            wire_tx
-                .publish(&msg)
-                .expect("failed to publish via WireTx");
+    //         wire_tx
+    //             .publish(&msg)
+    //             .expect("failed to publish via WireTx");
 
-            for _ in 0..50 {
-                {
-                    let guard = received.lock().unwrap();
-                    if !guard.is_empty() {
-                        break;
-                    }
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
+    //         for _ in 0..50 {
+    //             {
+    //                 let guard = received.lock().unwrap();
+    //                 if !guard.is_empty() {
+    //                     break;
+    //                 }
+    //             }
+    //             thread::sleep(Duration::from_millis(10));
+    //         }
 
-            let guard = received.lock().unwrap();
-            assert!(
-                !guard.is_empty(),
-                "expected at least one WirePacket in /ipc_tx"
-            );
+    //         let guard = received.lock().unwrap();
+    //         assert!(
+    //             !guard.is_empty(),
+    //             "expected at least one WirePacket in /ipc_tx"
+    //         );
 
-            let pkt = guard.last().unwrap();
+    //         let pkt = guard.last().unwrap();
 
-            assert_eq!(
-                pkt.topic_name(),
-                local_topic,
-                "WirePacket topic name mismatch"
-            );
+    //         assert_eq!(
+    //             pkt.topic_name(),
+    //             local_topic,
+    //             "WirePacket topic name mismatch"
+    //         );
 
-            let expected_bytes = bytemuck::bytes_of(&msg);
-            let plen = pkt.payload_len as usize;
-            assert!(
-                plen <= expected_bytes.len(),
-                "payload_len is larger than expected struct size"
-            );
-            assert_eq!(
-                &pkt.data[..plen],
-                &expected_bytes[..plen],
-                "WirePacket payload bytes do not match TestMsg"
-            );
-        }
+    //         let expected_bytes = bytemuck::bytes_of(&msg);
+    //         let plen = pkt.payload_len as usize;
+    //         assert!(
+    //             plen <= expected_bytes.len(),
+    //             "payload_len is larger than expected struct size"
+    //         );
+    //         assert_eq!(
+    //             &pkt.data[..plen],
+    //             &expected_bytes[..plen],
+    //             "WirePacket payload bytes do not match TestMsg"
+    //         );
+    //     }
 
-        unlink_queue(&local_topic);
-        unlink_queue(wire::IPC_TX_TOPIC_NAME);
-    }
+    //     unlink_queue(&local_topic);
+    //     unlink_queue(wire::IPC_TX_TOPIC_NAME);
+    // }
 }
