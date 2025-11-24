@@ -14,9 +14,9 @@ MqIPC gives you **local typed pub/sub**, **system-wide topics**, and an optional
 
 ---
 
-# ✨ Features
+# Features
 
-### 🧩 1. Strongly-Typed Local Topics
+### 1. Strongly-Typed Local Topics
 
 You can create typed topics such as:
 
@@ -28,7 +28,7 @@ Each process that opens the same topic name receives the same shared queue.
 
 Subscribers within the same process receive the message via a callback-based fan-out system.
 
-### 📡 2. System-Wide Communication
+### 2. System-Wide Communication
 
 All topics use **POSIX mqueues**, which are globally visible in the OS.
 Any process can:
@@ -37,7 +37,7 @@ Any process can:
 * subscribe to a topic,
 * or detect if the topic exists.
 
-### 🔌 3. Wire Mirroring (optional)
+### 3. Wire Mirroring (optional)
 
 Use `WireTx<T>` instead of `Topic<T>` to automatically **mirror** each publish into a special internal topic (`/ipc_tx`) that other processes can forward over external links.
 
@@ -51,7 +51,7 @@ From there, you can bridge to:
 * Shared memory
 * Anything you want
 
-### 🔄 4. Wire RX Routing (optional)
+### 4. Wire RX Routing (optional)
 
 On the receiving side (CAN/Serial/etc), you can reconstruct a `WirePacket` and drop it back into the correct **local topic** automatically:
 
@@ -63,18 +63,18 @@ Topics act as their own discovery mechanism.
 
 ---
 
-# 📦 Installation
+# Installation
 
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mqueue_ipc = { path = "." }   # or from git when published
+mq-ipc = { path = "." }
 ```
 
 ---
 
-# 🚀 Quick Start
+# Quick Start
 
 ## 1. Define a message type
 
@@ -92,7 +92,7 @@ pub struct MotorState {
 
 # Local Typed IPC
 
-## 📤 Publisher: `Topic<T>`
+## Publisher: `Topic<T>`
 
 ```rust
 use mqueue_ipc::Topic;
@@ -106,7 +106,7 @@ motor.publish(&MotorState {
 }, 1, 0)?;
 ```
 
-## 📥 Subscriber
+## Subscriber
 
 ```rust
 motor.subscribe(|state: MotorState| {
@@ -119,7 +119,7 @@ anything that opens `/motor/state` receives the same shared queue.
 
 ---
 
-# 🔌 Wire Mirroring (Distributed IPC)
+# Wire Mirroring (Distributed IPC)
 
 Use `WireTx<T>` instead of `Topic<T>`:
 
@@ -137,7 +137,7 @@ Every publish becomes:
 
 ---
 
-# 🌐 Wire TX Example (Router / Bridge)
+# Wire TX Example (Router / Bridge)
 
 Example router that listens on `/ipc_tx` and forwards packets over CAN:
 
@@ -156,7 +156,7 @@ examples/router_rx_socketcan.rs
 
 ---
 
-# 🌐 Wire RX Example (Distributed Routing)
+# Wire RX Example (Distributed Routing)
 
 When receiving a `WirePacket` from CAN/Serial:
 
@@ -181,26 +181,7 @@ where topics jump between machines or processes effortlessly.
 
 ---
 
-# 🧠 Architecture Summary
-
-```
-+----------------------+       +---------------------------+
-|   Process A          |       |    Process B              |
-|   WireTx<T>          |       |  Topic<T>                 |
-|    | publish(T)      |       |    ^                      |
-|    v                 |       |    | subscribe(T)         |
-|  Topic<T> ---------->|-----> |  Mqueue "/motor/state"    |
-|    |                 |       |                           |
-|    v                 |       +---------------------------+
-|  /ipc_tx(WirePacket) |
-+--------|-------------------------------------------------+
-         v
-   Your physical transport (CAN/Serial/TCP)
-```
-
----
-
-# 🛠 Why MqIPC?
+# Why MqIPC?
 
 MqIPC is designed for:
 
@@ -211,18 +192,11 @@ MqIPC is designed for:
 * easy distributed extension
 * no brokers, no registries, no XML/IDL layers
 
-It behaves like a **ROS-style pub/sub**, but:
-
-* without ROS,
-* without daemons,
-* without DDS,
-* without extra services.
-
 Just **POSIX mqueue + typed wrappers + optional wire framing**.
 
 ---
 
-# 📚 Examples Included
+# Examples Included
 
 | Example                  | Description                                                     |
 | ------------------------ | --------------------------------------------------------------- |
