@@ -61,6 +61,6 @@ fn main() -> io::Result<()> {
             msg.position, msg.velocity, msg.torque
         );
 
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_millis(10));
     }
 }
