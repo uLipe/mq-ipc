@@ -1,9 +1,8 @@
 # `mq-ipc` — Lightweight Publish/Subscribe IPC on POSIX Mqueues
 
-### *(with optional wire mirroring for distributed systems)*
-
 [![CI](https://github.com/uLipe/mq-ipc/actions/workflows/ci.yml/badge.svg)](https://github.com/uLipe/mq-ipc/actions/workflows/ci.yml)
 
+![alt text](misc/mq_ipc_demo.gif)
 
 `mq-ipc` (or **MqIPC**) is a fast, minimal, zero-dependency publish/subscribe IPC system built on **POSIX mqueues**.
 It is designed for embedded Linux, robotics, industrial automation, and distributed control systems where:
@@ -12,6 +11,8 @@ It is designed for embedded Linux, robotics, industrial automation, and distribu
 * you want a simple topic-based API,
 * multiple **processes** must exchange typed data,
 * and optionally, messages must flow over a **physical transport** (CAN, Serial, UDP, etc).
+
+### *(with optional wire mirroring for distributed systems)*
 
 MqIPC gives you **local typed pub/sub**, **system-wide topics**, and an optional **wire mirroring layer** that can export/import topics over any physical link.
 
