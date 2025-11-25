@@ -304,11 +304,6 @@ impl Drop for MqTopic {
         if let Some(handle) = self.worker.take() {
             let _ = handle.join();
         }
-
-        // unlink opcional, se você quiser limpar o nome automaticamente
-        // if let Ok(cname) = CString::new(self.name.clone()) {
-        //     unsafe { libc::mq_unlink(cname.as_ptr()); }
-        // }
     }
 }
 

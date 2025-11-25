@@ -1,3 +1,5 @@
 /build/
 *.lock
 /target/
+/.config/
+/.cargo/

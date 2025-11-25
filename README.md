@@ -299,3 +299,101 @@ or via code:
 ```rust
 mq_unlink("/motor/state");
 ```
+---
+
+## Cross-Compiling for AArch64 Linux
+
+This project can be cross-compiled for 64-bit ARM Linux systems (e.g., embedded boards running aarch64 Linux).
+The instructions below describe the recommended setup for cross-compiling on an x86_64 host targeting `aarch64-unknown-linux-gnu`.
+
+> **Note:** The steps for ARMv7-A (`armv7-unknown-linux-gnueabihf`) are similar.
+> Replace the target triple and toolchain names accordingly.
+
+---
+
+### 1. Install the Rust target
+
+```bash
+rustup target add aarch64-unknown-linux-gnu
+```
+
+---
+
+### 2. Install the cross C toolchain
+
+On Debian/Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install gcc-aarch64-linux-gnu
+```
+
+This provides the linker (`aarch64-linux-gnu-gcc`) and associated libc for the target.
+
+---
+
+### 3. Configure Cargo to use the correct linker
+
+Create or edit the file:
+
+```
+.cargo/config.toml
+```
+
+and add:
+
+```toml
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+```
+
+This ensures Rust links the final binary using the correct cross toolchain.
+
+---
+
+### 4. Build for AArch64
+
+To build the library and binaries:
+
+```bash
+cargo build --release --target aarch64-unknown-linux-gnu
+```
+
+To also build the project examples:
+
+```bash
+cargo build --release --target aarch64-unknown-linux-gnu --examples
+```
+
+All output artifacts will be located under:
+
+```
+target/aarch64-unknown-linux-gnu/release/
+target/aarch64-unknown-linux-gnu/release/examples/
+```
+
+---
+
+### 5. Deploying to the board
+
+Transfer the resulting binary to the target device:
+
+```bash
+scp target/aarch64-unknown-linux-gnu/release/<binary> user@<board-ip>:/tmp/
+```
+
+Then run it on the board:
+
+```bash
+ssh user@<board-ip>
+chmod +x /tmp/<binary>
+/tmp/<binary>
+```
+
+The board must have:
+
+* A Linux kernel with POSIX message queue support (`CONFIG_POSIX_MQUEUE`)
+* `/dev/mqueue` mounted (typically automatic; otherwise mount using `mount -t mqueue none /dev/mqueue`)
+* Any optional subsystems you intend to use, such as SocketCAN
+
+---
