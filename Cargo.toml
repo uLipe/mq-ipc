@@ -10,3 +10,4 @@ repository = "https://github.com/uLipe/mq-ipc"
 [dependencies]
 libc = "0.2"
 bytemuck = { version = "1.15", features = ["derive"] }
+arc-swap = "1.7"

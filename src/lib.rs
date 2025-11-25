@@ -28,11 +28,12 @@ use std::{
     os::raw::{c_char, c_long},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     thread,
 };
 
+use arc_swap::ArcSwap;
 use bytemuck::{Pod, Zeroable};
 
 pub const MSG_PAYLOAD_SIZE: usize = 240;
@@ -70,18 +71,22 @@ impl Msg {
     }
 }
 
-type Callback = Box<dyn Fn(Msg) + Send + Sync + 'static>;
 
+type Callback = Arc<dyn Fn(Msg) + Send + Sync + 'static>;
 /// A system-wide topic backed by POSIX mqueue (`mqueue`).
 ///
 /// Multiple processes can open the same name (e.g. "/topic.motor_state")
 /// and publish to / subscribe from it. Inside this process, you can
 /// register multiple callbacks that are invoked by a background worker
 /// thread whenever a message arrives.
+struct SubscriberList {
+    cbs: Vec<Callback>,
+}
+
 pub struct MqTopic {
     name: String,
     mqd: mqd_t,
-    subs: Arc<Mutex<Vec<Callback>>>,
+    subs: Arc<ArcSwap<SubscriberList>>,
     running: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
 }
@@ -114,7 +119,7 @@ impl MqTopic {
             return Err(io::Error::last_os_error());
         }
 
-        let subs = Arc::new(Mutex::new(Vec::<Callback>::new()));
+        let subs = Arc::new(ArcSwap::from_pointee(SubscriberList { cbs: Vec::new() }));
         let running = Arc::new(AtomicBool::new(true));
         let worker = Self::spawn_worker(mqd, Arc::clone(&subs), Arc::clone(&running));
 
@@ -150,7 +155,7 @@ impl MqTopic {
             return Err(err);
         }
 
-        let subs = Arc::new(Mutex::new(Vec::<Callback>::new()));
+        let subs = Arc::new(ArcSwap::from_pointee(SubscriberList { cbs: Vec::new() }));
         let running = Arc::new(AtomicBool::new(true));
         let worker = Self::spawn_worker(mqd, Arc::clone(&subs), Arc::clone(&running));
 
@@ -165,7 +170,7 @@ impl MqTopic {
 
     fn spawn_worker(
         mqd: mqd_t,
-        subs: Arc<Mutex<Vec<Callback>>>,
+        subs: Arc<ArcSwap<SubscriberList>>,
         running: Arc<AtomicBool>,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
@@ -218,9 +223,10 @@ impl MqTopic {
                     break;
                 }
 
-                let guard = subs.lock().unwrap();
-                for cb in guard.iter() {
-                    cb(msg);
+                let current = subs.load();
+
+                for cb in &current.cbs {
+                    (cb)(msg);
                 }
             }
         })
@@ -231,8 +237,25 @@ impl MqTopic {
     where
         F: Fn(Msg) + Send + Sync + 'static,
     {
-        let mut guard = self.subs.lock().unwrap();
-        guard.push(Box::new(f));
+        let cb: Callback = Arc::new(f);
+
+        loop {
+            let current = self.subs.load_full();
+
+            let mut new_vec = current.cbs.clone();
+            new_vec.push(cb.clone());
+
+            let new_list = Arc::new(SubscriberList { cbs: new_vec });
+
+            match self.subs.compare_and_swap(&current, new_list) {
+                old if Arc::ptr_eq(&old, &current) => {
+                    break;
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
     }
 
     /// Publish a raw message to this topic with a given priority.
